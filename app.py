@@ -341,19 +341,24 @@ def update_password(message, user_id):
         db.session.commit()
         bot.send_message(message.chat.id, "✅ Пароль успешно изменен!")
 
-# ... (начало кода такое же до момента запуска бота)
+# ... (весь предыдущий код без изменений) ...
 
 def run_bot():
+    print("--- ПОПЫТКА ЗАПУСКА БОТА ---")
     while True:
         try:
-            print("Бот запускается...")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
-            print(f"ОШИБКА БОТА: {e}")
+            print(f"--- ОШИБКА БОТА: {e} ---")
             import time
-            time.sleep(5) # Ждем 5 секунд перед перезапуском при ошибке
+            time.sleep(10)
 
 if __name__ == '__main__':
-    # Важно: daemon=True поможет убивать старые процессы при перезагрузке
-    threading.Thread(target=run_bot, daemon=True).start()
-    app.run(host='0.0.0.0', port=10000)
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask на порту, который дает Render
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)

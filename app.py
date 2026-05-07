@@ -348,20 +348,23 @@ def run_bot():
     except Exception as e:
         print(f"--- КРИТИЧЕСКАЯ ОШИБКА БОТА: {e} ---")
 
-# Хитрый запуск: создаем поток до первого запроса
-@app.before_first_request
+# --- ИСПРАВЛЕННЫЙ ЗАПУСК БОТА ДЛЯ FLASK 3.x ---
+bot_started = False
+
+@app.before_request
 def activate_job():
-    def run_job():
-        run_bot()
-    thread = threading.Thread(target=run_job, daemon=True)
-    thread.start()
+    global bot_started
+    if not bot_started:
+        thread = threading.Thread(target=run_bot, daemon=True)
+        thread.start()
+        bot_started = True
 
 # Тестовая страница, чтобы "разбудить" бота
 @app.route('/init')
 def init_bot():
-    return "Бот должен был проснуться! Проверь логи."
+    return "Бот просыпается... Проверь логи через 10 секунд."
 
 if __name__ == '__main__':
-    # Этот блок работает только на твоем ПК, на Render работает Gunicorn
+    import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)

@@ -341,24 +341,27 @@ def update_password(message, user_id):
         db.session.commit()
         bot.send_message(message.chat.id, "✅ Пароль успешно изменен!")
 
-# ... (весь предыдущий код без изменений) ...
-
 def run_bot():
-    print("--- ПОПЫТКА ЗАПУСКА БОТА ---")
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
-        except Exception as e:
-            print(f"--- ОШИБКА БОТА: {e} ---")
-            import time
-            time.sleep(10)
+    print("--- БОТ ЗАПУСКАЕТСЯ ЧЕРЕЗ ПЛАНЕР ---")
+    try:
+        bot.polling(none_stop=True, interval=0, timeout=20)
+    except Exception as e:
+        print(f"--- КРИТИЧЕСКАЯ ОШИБКА БОТА: {e} ---")
+
+# Хитрый запуск: создаем поток до первого запроса
+@app.before_first_request
+def activate_job():
+    def run_job():
+        run_bot()
+    thread = threading.Thread(target=run_job, daemon=True)
+    thread.start()
+
+# Тестовая страница, чтобы "разбудить" бота
+@app.route('/init')
+def init_bot():
+    return "Бот должен был проснуться! Проверь логи."
 
 if __name__ == '__main__':
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Запускаем Flask на порту, который дает Render
-    import os
+    # Этот блок работает только на твоем ПК, на Render работает Gunicorn
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)

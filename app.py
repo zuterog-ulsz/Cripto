@@ -5,6 +5,10 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 import random
 import threading
+import io
+import matplotlib
+matplotlib.use('Agg') # Режим без графического окна (для сервера)
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 
@@ -17,16 +21,14 @@ TOKEN = '8761993990:AAG60aP6hT7U_FrcDBrv6KqiYvMckGgqO0s'
 db = SQLAlchemy(app)
 bot = telebot.TeleBot(TOKEN)
 
-# Словарь для хранения авторизованных пользователей: {chat_id: user_id}
 active_sessions = {}
-# Временный словарь для процесса входа
 login_process = {}
 
 # --- МОДЕЛИ БАЗЫ ДАННЫХ ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(80), nullable=False, default="1234") # ДОБАВЛЕН ПАРОЛЬ
+    password = db.Column(db.String(80), nullable=False, default="1234")
     balance = db.Column(db.Float, default=1000.0)
 
 class Coin(db.Model):
@@ -42,14 +44,13 @@ class Portfolio(db.Model):
     coin_name = db.Column(db.String(80), nullable=False)
     amount = db.Column(db.Float, default=0.0)
 
-# Создаем таблицы и обновляем старую (добавляем колонку пароля)
 with app.app_context():
     db.create_all()
     try:
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN password VARCHAR(80) DEFAULT \'1234\';'))
         db.session.commit()
     except:
-        db.session.rollback() # Если колонка уже есть, игнорируем ошибку
+        db.session.rollback()
 
 # --- ЛОГИКА ИЗМЕНЕНИЯ КУРСОВ ---
 def update_prices():
@@ -63,6 +64,27 @@ def update_prices():
         if random.random() < 0.15:
             coin.trend = random.uniform(-0.03, 0.03)
     db.session.commit()
+
+# --- ФУНКЦИЯ РИСОВАНИЯ ГРАФИКА ---
+def generate_chart(coin_name, current_price):
+    # Генерируем 30 случайных точек истории для красоты (заканчиваются текущей ценой)
+    prices = [current_price]
+    for _ in range(30):
+        prices.insert(0, prices[0] * (1 + random.uniform(-0.04, 0.04)))
+    
+    plt.figure(figsize=(8, 4))
+    plt.plot(prices, marker='', color='#00f2fe', linewidth=2.5)
+    plt.title(f"График {coin_name} (Текущая цена: ${current_price:,.2f})", color='white', fontsize=14)
+    plt.gca().set_facecolor('#1e293b')
+    plt.gcf().patch.set_facecolor('#0f172a')
+    plt.tick_params(colors='white')
+    plt.grid(color='#334155', linestyle='--', linewidth=0.5)
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
 
 # --- СУПЕР ИНТЕРФЕЙС АДМИНА ---
 ADMIN_HTML = '''
@@ -149,7 +171,7 @@ def index():
 
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("💰 Баланс", "💼 Портфель", "📈 Курсы", "🛒 Купить", "📉 Продать", "🚪 Выйти")
+    markup.add("💰 Баланс", "💼 Портфель", "📈 Курсы", "📊 Графики", "🛒 Купить", "📉 Продать", "⚙️ Настройки", "🚪 Выйти")
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -214,8 +236,8 @@ def main_logic(message):
             coins = Coin.query.all()
             markup = types.InlineKeyboardMarkup()
             for c in coins:
-                markup.add(types.InlineKeyboardButton(text=f"Купить {c.name} (${c.price})", callback_data=f"buy_{c.id}"))
-            bot.send_message(message.chat.id, "Выберите валюту для покупки (покупается 1 шт):", reply_markup=markup)
+                markup.add(types.InlineKeyboardButton(text=f"Купить {c.name} (${c.price:,.2f})", callback_data=f"buy_{c.id}"))
+            bot.send_message(message.chat.id, "Выберите валюту для покупки (1 шт):", reply_markup=markup)
 
         elif message.text == "📉 Продать":
             portfolio = Portfolio.query.filter_by(user_id=user.id).all()
@@ -225,47 +247,99 @@ def main_logic(message):
                 if p.amount > 0:
                     has_coins = True
                     current_coin = Coin.query.filter_by(name=p.coin_name).first()
-                    markup.add(types.InlineKeyboardButton(text=f"Продать {p.coin_name} (${current_coin.price})", callback_data=f"sell_{current_coin.id}"))
+                    markup.add(types.InlineKeyboardButton(text=f"Продать {p.coin_name} (${current_coin.price:,.2f})", callback_data=f"sell_{current_coin.id}"))
             
             if has_coins:
-                bot.send_message(message.chat.id, "Что будем продавать? (продается 1 шт по текущему курсу):", reply_markup=markup)
+                bot.send_message(message.chat.id, "Что продаем? (1 шт):", reply_markup=markup)
             else:
                 bot.send_message(message.chat.id, "У вас нет валюты для продажи!")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_') or call.data.startswith('sell_'))
-def process_trade(call):
+        # --- НОВЫЕ КНОПКИ ---
+        elif message.text == "📊 Графики":
+            coins = Coin.query.all()
+            markup = types.InlineKeyboardMarkup()
+            for c in coins:
+                markup.add(types.InlineKeyboardButton(text=f"График {c.name}", callback_data=f"graph_{c.id}"))
+            bot.send_message(message.chat.id, "Выберите монету, чтобы посмотреть график:", reply_markup=markup)
+            
+        elif message.text == "⚙️ Настройки":
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton(text="Изменить Логин", callback_data="settings_login"))
+            markup.add(types.InlineKeyboardButton(text="Изменить Пароль", callback_data="settings_password"))
+            bot.send_message(message.chat.id, "⚙️ **Настройки аккаунта**", reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: True)
+def process_callback(call):
     with app.app_context():
-        user = User.query.get(active_sessions.get(call.message.chat.id))
-        if not user:
+        user_id = active_sessions.get(call.message.chat.id)
+        if not user_id:
             return bot.answer_callback_query(call.id, "Сначала войдите в аккаунт!")
+        user = User.query.get(user_id)
 
-        action, coin_id = call.data.split('_')
-        coin = Coin.query.get(int(coin_id))
+        # ТОРГОВЛЯ
+        if call.data.startswith('buy_') or call.data.startswith('sell_'):
+            action, coin_id = call.data.split('_')
+            coin = Coin.query.get(int(coin_id))
 
-        if action == "buy":
-            if user.balance >= coin.price:
-                user.balance -= coin.price
-                port = Portfolio.query.filter_by(user_id=user.id, coin_name=coin.name).first()
-                if port:
-                    port.amount += 1
+            if action == "buy":
+                if user.balance >= coin.price:
+                    user.balance -= coin.price
+                    port = Portfolio.query.filter_by(user_id=user.id, coin_name=coin.name).first()
+                    if port:
+                        port.amount += 1
+                    else:
+                        db.session.add(Portfolio(user_id=user.id, coin_name=coin.name, amount=1))
+                    db.session.commit()
+                    bot.answer_callback_query(call.id, f"✅ Куплено 1 {coin.name}!")
+                    bot.edit_message_text(f"✅ Успешно куплен {coin.name}.\nВаш баланс: ${user.balance:,.2f}", call.message.chat.id, call.message.message_id)
                 else:
-                    db.session.add(Portfolio(user_id=user.id, coin_name=coin.name, amount=1))
-                db.session.commit()
-                bot.answer_callback_query(call.id, f"✅ Куплено 1 {coin.name}!")
-                bot.edit_message_text(f"✅ Успешно куплен {coin.name}.\nВаш баланс: ${user.balance:,.2f}", call.message.chat.id, call.message.message_id)
-            else:
-                bot.answer_callback_query(call.id, "❌ Недостаточно средств!")
+                    bot.answer_callback_query(call.id, "❌ Недостаточно средств!")
 
-        elif action == "sell":
-            port = Portfolio.query.filter_by(user_id=user.id, coin_name=coin.name).first()
-            if port and port.amount > 0:
-                port.amount -= 1
-                user.balance += coin.price
-                db.session.commit()
-                bot.answer_callback_query(call.id, f"✅ Продано 1 {coin.name}!")
-                bot.edit_message_text(f"✅ Успешно продан {coin.name}.\nВаш баланс: ${user.balance:,.2f}", call.message.chat.id, call.message.message_id)
-            else:
-                bot.answer_callback_query(call.id, "❌ У вас нет этой валюты!")
+            elif action == "sell":
+                port = Portfolio.query.filter_by(user_id=user.id, coin_name=coin.name).first()
+                if port and port.amount > 0:
+                    port.amount -= 1
+                    user.balance += coin.price
+                    db.session.commit()
+                    bot.answer_callback_query(call.id, f"✅ Продано 1 {coin.name}!")
+                    bot.edit_message_text(f"✅ Успешно продан {coin.name}.\nВаш баланс: ${user.balance:,.2f}", call.message.chat.id, call.message.message_id)
+                else:
+                    bot.answer_callback_query(call.id, "❌ У вас нет этой валюты!")
+
+        # ГРАФИКИ
+        elif call.data.startswith('graph_'):
+            bot.answer_callback_query(call.id, "Генерирую график...")
+            coin_id = int(call.data.split('_')[1])
+            coin = Coin.query.get(coin_id)
+            img = generate_chart(coin.name, coin.price)
+            bot.send_photo(call.message.chat.id, img)
+
+        # НАСТРОЙКИ
+        elif call.data == "settings_login":
+            msg = bot.send_message(call.message.chat.id, "Введите новый логин:")
+            bot.register_next_step_handler(msg, update_login, user.id)
+        elif call.data == "settings_password":
+            msg = bot.send_message(call.message.chat.id, "Введите новый пароль:")
+            bot.register_next_step_handler(msg, update_password, user.id)
+
+def update_login(message, user_id):
+    with app.app_context():
+        new_username = message.text
+        existing = User.query.filter_by(username=new_username).first()
+        if existing:
+            bot.send_message(message.chat.id, "❌ Этот логин уже занят!")
+        else:
+            user = User.query.get(user_id)
+            user.username = new_username
+            db.session.commit()
+            bot.send_message(message.chat.id, f"✅ Логин успешно изменен на: {new_username}")
+
+def update_password(message, user_id):
+    with app.app_context():
+        user = User.query.get(user_id)
+        user.password = message.text
+        db.session.commit()
+        bot.send_message(message.chat.id, "✅ Пароль успешно изменен!")
 
 def run_bot():
     bot.infinity_polling()

@@ -1,146 +1,93 @@
 from flask import Flask, jsonify, request, render_template_string
+from flask_sqlalchemy import SQLAlchemy
 import random
-import sqlite3
 
 app = Flask(__name__)
 
-# --- ЛОГИКА БАЗЫ ДАННЫХ ---
-def init_db():
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    # Таблица пользователей
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, balance REAL)''')
-    # Таблица валют
-    cursor.execute('''CREATE TABLE IF NOT EXISTS coins 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, price REAL, trend REAL)''')
-    conn.commit()
-    
-    # Добавим начальные монеты, если их нет
-    cursor.execute("SELECT count(*) FROM coins")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO coins (name, price, trend) VALUES ('Bitcoin', 50000.0, 0.01)")
-        cursor.execute("INSERT INTO coins (name, price, trend) VALUES ('Ethereum', 3000.0, 0.005)")
-        cursor.execute("INSERT INTO coins (name, price, trend) VALUES ('SisterCoin', 10.0, 0.1)")
-    conn.commit()
-    conn.close()
+# СЮДА ВСТАВЬ СВОЮ ССЫЛКУ ИЗ SUPABASE (замени password на свой пароль)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres.postgresql://postgres:[1210892254225]@db.vpwxwkpwstnhyagmufsh.supabase.co:5432/postgres'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-init_db()
+db = SQLAlchemy(app)
 
-# --- УМНЫЙ АЛГОРИТМ КУРСА ---
+# --- МОДЕЛИ ДАННЫХ (ТАБЛИЦЫ) ---
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    balance = db.Column(db.Float, default=1000.0)
+
+class Coin(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), unique=True, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    trend = db.Column(db.Float, default=0.0)
+
+# Создаем таблицы в облаке
+with app.app_context():
+    db.create_all()
+
+# --- ЛОГИКА ---
 def update_prices():
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, price, trend FROM coins")
-    coins = cursor.fetchall()
-    
-    for coin_id, price, trend in coins:
-        # Случайное колебание + влияние тренда
-        noise = random.uniform(-0.03, 0.03) 
-        new_price = price * (1 + trend + noise)
-        
-        # Чтобы цена не стала отрицательной
-        if new_price < 0.01: new_price = 0.01
-        
-        # Шанс смены тренда (чтобы рынок разворачивался)
-        new_trend = trend
-        if random.random() < 0.1: # 10% шанс изменения направления
-            new_trend = random.uniform(-0.02, 0.02)
-            
-        cursor.execute("UPDATE coins SET price = ?, trend = ? WHERE id = ?", (round(new_price, 2), new_trend, coin_id))
-    
-    conn.commit()
-    conn.close()
+    coins = Coin.query.all()
+    for coin in coins:
+        noise = random.uniform(-0.03, 0.03)
+        coin.price = round(coin.price * (1 + coin.trend + noise), 2)
+        if coin.price < 0.01: coin.price = 0.01
+        if random.random() < 0.1:
+            coin.trend = random.uniform(-0.02, 0.02)
+    db.session.commit()
 
-# --- СТРАНИЦЫ (ИНТЕРФЕЙС) ---
-
-# Главная админка
+# --- СТРАНИЦЫ ---
 @app.route('/admin')
 def admin_panel():
-    update_prices() # Обновляем курсы при каждом просмотре
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM coins")
-    coins = cursor.fetchall()
-    cursor.execute("SELECT * FROM users")
-    users = cursor.fetchall()
-    conn.close()
+    update_prices()
+    coins = Coin.query.all()
+    users = User.query.all()
     
-    # Простой HTML для управления
     html = '''
-    <h1>Управление Крипто-Игрой</h1>
-    <h2>Валюты</h2>
+    <h1>Крипто-Админка (Cloud DB)</h1>
+    <h3>Валюты</h3>
     <table border="1">
-        <tr><th>ID</th><th>Название</th><th>Цена</th><th>Тренд</th></tr>
+        <tr><th>Название</th><th>Цена</th></tr>
         {% for coin in coins %}
-        <tr>
-            <td>{{ coin[0] }}</td>
-            <td>{{ coin[1] }}</td>
-            <td>${{ coin[2] }}</td>
-            <td>{{ coin[3] }}</td>
-        </tr>
+        <tr><td>{{ coin.name }}</td><td>${{ coin.price }}</td></tr>
         {% endfor %}
     </table>
-    
-    <h2>Создать новую валюту</h2>
     <form action="/admin/add_coin" method="post">
-        Имя: <input type="text" name="name"> Цена: <input type="number" name="price">
-        <input type="submit" value="Создать">
+        Имя: <input name="name"> Цена: <input name="price" type="number" step="0.01"> <input type="submit" value="Создать монету">
     </form>
-
-    <h2>Пользователи</h2>
+    <h3>Юзеры</h3>
     <ul>
         {% for user in users %}
-        <li>ID: {{ user[0] }} | <b>{{ user[1] }}</b> | Баланс: ${{ user[2] }}</li>
+        <li>{{ user.username }} - ${{ user.balance }}</li>
         {% endfor %}
     </ul>
-    
-    <h2>Создать аккаунт</h2>
     <form action="/admin/add_user" method="post">
-        Логин: <input type="text" name="user"> Баланс: <input type="number" name="balance">
-        <input type="submit" value="Добавить">
+        Имя: <input name="user"> <input type="submit" value="Создать юзера">
     </form>
     '''
     return render_template_string(html, coins=coins, users=users)
 
-# Добавление монеты
 @app.route('/admin/add_coin', methods=['POST'])
 def add_coin():
     name = request.form.get('name')
-    price = request.form.get('price')
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO coins (name, price, trend) VALUES (?, ?, 0)", (name, price))
-    conn.commit()
-    conn.close()
+    price = float(request.form.get('price'))
+    new_coin = Coin(name=name, price=price)
+    db.session.add(new_coin)
+    db.session.commit()
     return "Монета добавлена! <a href='/admin'>Назад</a>"
 
-# Добавление юзера
 @app.route('/admin/add_user', methods=['POST'])
 def add_user():
     name = request.form.get('user')
-    balance = request.form.get('balance')
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO users (username, balance) VALUES (?, ?)", (name, balance))
-    conn.commit()
-    conn.close()
+    new_user = User(username=name)
+    db.session.add(new_user)
+    db.session.commit()
     return "Юзер добавлен! <a href='/admin'>Назад</a>"
-
-# API для будущего приложения (выдает цены в формате JSON)
-@app.route('/api/prices')
-def api_prices():
-    update_prices()
-    conn = sqlite3.connect('game.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, price FROM coins")
-    data = dict(cursor.fetchall())
-    conn.close()
-    return jsonify(data)
 
 @app.route('/')
 def index():
-    return "Сервер работает. Админка тут: <a href='/admin'>/admin</a>"
+    return "Сервер с облачной базой готов. <a href='/admin'>Перейти в админку</a>"
 
 if __name__ == '__main__':
     app.run()

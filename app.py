@@ -341,9 +341,19 @@ def update_password(message, user_id):
         db.session.commit()
         bot.send_message(message.chat.id, "✅ Пароль успешно изменен!")
 
+# ... (начало кода такое же до момента запуска бота)
+
 def run_bot():
-    bot.infinity_polling()
+    while True:
+        try:
+            print("Бот запускается...")
+            bot.polling(none_stop=True, interval=0, timeout=20)
+        except Exception as e:
+            print(f"ОШИБКА БОТА: {e}")
+            import time
+            time.sleep(5) # Ждем 5 секунд перед перезапуском при ошибке
 
 if __name__ == '__main__':
+    # Важно: daemon=True поможет убивать старые процессы при перезагрузке
     threading.Thread(target=run_bot, daemon=True).start()
-    app.run()
+    app.run(host='0.0.0.0', port=10000)

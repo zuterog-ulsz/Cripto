@@ -7,7 +7,7 @@ app = Flask(__name__)
 # Исправленная ссылка (проверь свой пароль внутри скобок, скобки [] убери)
 # Пример: 'postgresql://postgres:пароль@db.vpwxwkpwstnhyagmufsh.supabase.co:5432/postgres'
 # Обрати внимание на порт 6543 и добавление ?sslmode=require в конце
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:1210892254225@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres.vpwxwkpwstnhyagmufsh:1210892254225@aws-1-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
